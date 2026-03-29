@@ -1,4 +1,9 @@
 *.tar.gz
+*.tar
+*.jpg
+*.csv
+*.data
+*/serial.txt
 BaslerCameraSample
 grindstone
 cmake-build-debug/
