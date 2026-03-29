@@ -283,36 +283,26 @@ int main(int argc, char* argv[])
                 zeroHistogram(histogram);
 
                 // https://gamedev.stackexchange.com/questions/162670/rotation-of-a-matrix-with-unequal-rows-and-columns
-                for(int j=0; j < rows; ++j)
-                {
-                    int dx = (rows - 1) - j;
-                    for(int i = 0; i < cols; ++i)
-                    {
-                        int dy = i;
-                        uint8_t pixel = buf[j * cols + i]; // this has to be unsigned or else the histogram indexing gets very upset
+                int k = 0;
+                for(int i = cols; i > 0; i--) {
+                    for(int j = 0; j < rows; j++) {
+                        uint8_t pixel = buf[(j*cols) + i]; // this has to be unsigned or else the histogram indexing gets very upset
                         // a char is signed because of evil Inverse ASCII (we're scared of it)
 
-                        //rotated[dy * rows + dx] = buf[j * cols + i];
                         // time for the world's jankiest mono->rgba conversion
                         // doing it in here saves time and memory over doing it as a second loop
-                        rgbaFrame[(dy * rows + dx)*4 + 0] = pixel;
-                        rgbaFrame[(dy * rows + dx)*4 + 1] = pixel;
-                        rgbaFrame[(dy * rows + dx)*4 + 2] = pixel;
-                        rgbaFrame[(dy * rows + dx)*4 + 3] = 0xff;
+                        rgbaFrame[k*4 + 0] = pixel;
+                        rgbaFrame[k*4 + 1] = pixel;
+                        rgbaFrame[k*4 + 2] = pixel;
+                        rgbaFrame[k*4 + 3] = 0xff; // alpha channel
 
                         histogram[ (int)pixel ] += 1.0f; // yes, I'm using the value of the pixel as the index for the histogram
                         // since it's just one byte, it can't be greater than 255, and since it's uint, it can't be less than 0
+
+                        k++;
                     }
                 }
-                /*
-                // world's jankiest mono->rgba conversion
-                for(int i=0; i<ptrGrabResult->GetBufferSize(); i++) {
-                    rgbaFrame[i*4 + 0] = rotated[i];
-                    rgbaFrame[i*4 + 1] = rotated[i];
-                    rgbaFrame[i*4 + 2] = rotated[i];
-                    rgbaFrame[i*4 + 3] = 0xff;
-                }
-                 */
+
                 LoadTextureFromMemory(rgbaFrame, &my_image_texture, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth());
             }
             else
@@ -321,15 +311,6 @@ int main(int argc, char* argv[])
             }
 
             glfwPollEvents();
-            /*
-            if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0)
-            {
-                ImGui_ImplGlfw_Sleep(10);
-                // TODO: remove this after making sure it doesn't explode
-                //      the code path is only hit if the window is minimized
-                continue;
-            }
-            */
 
             // Start the Dear ImGui frame
             ImGui_ImplOpenGL3_NewFrame();
