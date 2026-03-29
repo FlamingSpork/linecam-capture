@@ -1,0 +1,4 @@
+*.tar.gz
+BaslerCameraSample
+grindstone
+cmake-build-debug/
