@@ -66,7 +66,7 @@ void handleSerial(int fd, string outFileName) {
                 read(fd, temp, sizeof(temp));
                 if(temp[0] != 0x11) {
                     flag = true;
-                    break;
+                    break; // this only breaks us out of one layer, so we use the flag to break out of the next one
                 }
             }
             if(flag) {
@@ -76,7 +76,7 @@ void handleSerial(int fd, string outFileName) {
                 getNextBytes(fd, parseBuf, 16);
                 d = (struct accelData*)parseBuf;
                 outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
-                memcpy((void*)&latestAccel, d, 16);
+                memcpy((void*)&latestAccel, d, 16); // copy it to the shared variable to avoid potential weirdness with threads
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence
@@ -91,18 +91,18 @@ void handleSerial(int fd, string outFileName) {
                 // invalid sequence, reset
                 continue;
             }else {
-                // now we have to read into strBuf until we see a null or newline or whatever
+                // now we have to read into strBuf until we see a null or newline or whatever or we run out of space
                 j = 0;
-                while(((char)temp[0] != '\n') && j < 256) {
+                while(((char)temp[0] != '\n') && j < 1024) {
                     read(fd, temp, sizeof(temp));
                     strBuf[j] = (char)temp[0];
                     j++;
                 }
                 outFile<<strBuf<<endl;
-                memset(strBuf, 0, sizeof(strBuf));
+                memset(strBuf, 0, sizeof(strBuf)); // otherwise we'll leave garbage from the previous entry
             }
         }else{
-            continue;
+            continue; // not a valid sequence start, so try again until we get one
         }
     }
     outFile.close();
@@ -428,6 +428,7 @@ int main(int argc, char* argv[])
                 ImGui::RadioButton("-Y", &directionSelection, 5);
                 ImGui::SameLine();
                 ImGui::RadioButton("-Z", &directionSelection, 6);
+                ImGui::Text("typically +/- Z");
 
                 ImGui::End();
             }
