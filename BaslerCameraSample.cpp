@@ -33,12 +33,74 @@ void handleSigint(int s) {
     capFlag = false;
 }
 
+struct accelData{
+    uint32_t millis; // was unsigned long over on the arduino, but that can't be guaranteed
+    float x;
+    float y;
+    float z;
+}; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
+// this depends on little endian, like on x64 and the samd21 chip
+
+void getNextBytes(int fd, char* buf, size_t count) {
+    for(size_t i = 0; i<count; i++) {
+        read(fd, (void*)&buf[i], 1);
+    }
+}
+
 void handleSerial(int fd, string outFileName) {
     ofstream outFile(outFileName);
+    char parseBuf[16];
+    char strBuf[1024];
+    uint8_t temp[1];
+    bool flag = false;
+    struct accelData* d;
+    int j = 0;
     while(capFlag) {
-        char buf[1024];
-        int n = read(fd, buf, sizeof(buf));
-        outFile.write(buf, n);
+        flag = false;
+        read(fd, temp, sizeof(temp));
+        if(temp[0] == 0x11) {
+            // this could be the start of a valid sequence
+            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x11 that isn't coming its way
+                read(fd, temp, sizeof(temp));
+                if(temp[0] != 0x11) {
+                    flag = true;
+                    break;
+                }
+            }
+            if(flag) {
+                // invalid sequence, reset
+                continue;
+            }else {
+                getNextBytes(fd, parseBuf, 16);
+                d = (struct accelData*)parseBuf;
+                outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
+            }
+        }else if(temp[0] == (uint8_t)0x22) {
+            // this could also be the start of a valid sequence
+            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x22 that isn't coming its way
+                read(fd, temp, sizeof(temp));
+                if(temp[0] != 0x22) {
+                    flag = true;
+                    break;
+                }
+            }
+            if(flag) {
+                // invalid sequence, reset
+                continue;
+            }else {
+                // now we have to read into strBuf until we see a null or newline or whatever
+                j = 0;
+                while(((char)temp[0] != '\n') && j < 256) {
+                    read(fd, temp, sizeof(temp));
+                    strBuf[j] = (char)temp[0];
+                    j++;
+                }
+                outFile<<strBuf<<endl;
+                memset(strBuf, 0, sizeof(strBuf));
+            }
+        }else{
+            continue;
+        }
     }
     outFile.close();
 }
@@ -47,7 +109,6 @@ void printHelp() {
     cout << "Usage: ./BaslerCameraSample [-g 200] [-e 250]"<<endl;
     cout << "\t-g: gain [200~800]"<<endl;
     cout << "\t-e: exposure [microseconds]"<<endl;
-    cout << "\t-d: display?"<<endl;
 }
 
 static void glfw_error_callback(int error, const char* description)
@@ -95,16 +156,12 @@ int main(int argc, char* argv[])
     int c;
     int gain = 200;
     int expTime = 250;
-    bool display = false; // TODO: remove?
-    while((c=getopt(argc, argv, "?hdg:e:")) != -1) {
+    while((c=getopt(argc, argv, "?hg:e:")) != -1) {
         switch(c) {
             case '?':
             case 'h':
                 printHelp();
                 return 1;
-            case 'd':
-                display = true;
-                break;
             case 'g':
                 gain = atoi(optarg);
                 break;
@@ -237,6 +294,9 @@ int main(int argc, char* argv[])
         metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
         metaFile << "camera.ExposureTimeAbs," << camera.ExposureTimeAbs.ToStringOrDefault("err!") << endl;
         metaFile << "camera.GainRaw," << camera.GainRaw.ToStringOrDefault("err!") << endl;
+        metaFile << "serial.Protocol,binary"<<endl;
+        metaFile << "serial.OutputFormat,text"<<endl;
+        metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
 
         fstream camFile;
         camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
@@ -260,7 +320,6 @@ int main(int argc, char* argv[])
         float histogram[256]; // assumes 8 bit mono pixels!
 
         char *rgbaFrame = (char*)malloc(rows*cols*4);
-        //char *rotated = (char*)malloc(rows*cols);
 
         while (capFlag)
         {
@@ -282,12 +341,11 @@ int main(int argc, char* argv[])
                 cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes" << endl;
                 zeroHistogram(histogram);
 
-                // https://gamedev.stackexchange.com/questions/162670/rotation-of-a-matrix-with-unequal-rows-and-columns
                 int k = 0;
                 for(int i = cols; i > 0; i--) {
                     for(int j = 0; j < rows; j++) {
                         uint8_t pixel = buf[(j*cols) + i]; // this has to be unsigned or else the histogram indexing gets very upset
-                        // a char is signed because of evil Inverse ASCII (we're scared of it)
+                        // a char is signed in order to represent evil Inverse ASCII (we're scared of it)
 
                         // time for the world's jankiest mono->rgba conversion
                         // doing it in here saves time and memory over doing it as a second loop
@@ -349,7 +407,8 @@ int main(int argc, char* argv[])
                 }
                 ImGui::End();
             }
-
+            //TODO: get most recent accelerometer data and display it?
+            // would require inter-thread communication, but it *is* possible since we're parsing here
             if(gain != lastGain) {
                 camera.GainRaw.TrySetValue(gain);
                 lastGain = gain;

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <fstream>
+#include <iomanip>
 
 using namespace std;
 
@@ -11,6 +12,20 @@ using namespace std;
 // https://stackoverflow.com/questions/6947413/how-to-open-read-and-write-from-serial-port-in-c
 
 bool runFlag = true;
+
+struct accelData{
+    uint32_t millis; // was unsigned long over on the arduino, but that can't be guaranteed
+    float x;
+    float y;
+    float z;
+}; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
+// this depends on little endian, like on x64 and the samd21 chip
+
+void getNextBytes(int fd, char* buf, size_t count) {
+    for(size_t i = 0; i<count; i++) {
+        read(fd, (void*)&buf[i], 1);
+    }
+}
 
 int main(int argc, char* argv[]) {
     int fd = open("/dev/ttyACM0", O_RDWR | O_NOCTTY | O_SYNC);
@@ -34,7 +49,7 @@ int main(int argc, char* argv[]) {
     tty.c_iflag &= ~IGNBRK; // no break processing
     tty.c_lflag = 0; // no signaling chars, no echo, no canonical processing
     tty.c_oflag = 0; // no remapping or delays
-    tty.c_cc[VMIN] = 0; // don't block on read
+    tty.c_cc[VMIN] = 0; // do not block on read
     tty.c_cc[VTIME] = 5; // 0.5s read timeout
     tty.c_iflag &= ~(IXON | IXOFF | IXANY); // no xon/xoff control
     tty.c_cflag |= (CLOCAL | CREAD); // ignore modem controls
@@ -49,11 +64,82 @@ int main(int argc, char* argv[]) {
     cout << "Port open???" << endl;
     ofstream outFile("out.txt");
 
+    // to synchronize, we wait for 4*0x11 and then we put the next 16 bytes into the parse buffer
+    // if we see 4*0x22, the next byte is size and then that many bytes of text
+    //
+    // our read sizes are random, but guaranteed to be at least one byte
+    // we need a way to run until we've gotten the desired number of bytes
+
+    char parseBuf[32]; // oversized
+    char strBuf[256];  // max representable size
+    uint8_t temp[1];
+    bool flag = false;
+    struct accelData* d;
+    int j = 0;
+
     while(runFlag) {
+        flag = false;
+        read(fd, temp, sizeof(temp));
+        //printf("got value: 0x%x\n", temp[0]);
+        //continue;
+        if(temp[0] == 0x11) {
+            // this could be the start of a valid sequence
+            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x11 that isn't coming its way
+                read(fd, temp, sizeof(temp));
+                if(temp[0] != 0x11) {
+                    flag = true;
+                    break;
+                }
+            }
+            if(flag) {
+                // invalid sequence, reset
+                continue;
+            }else {
+                cout<<"got data init seq"<< endl;
+                getNextBytes(fd, parseBuf, 16);
+                d = (struct accelData*)parseBuf;
+                cout<<"time: "<<d->millis<<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
+            }
+        }else if(temp[0] == (uint8_t)0x22) {
+            // this could also be the start of a valid sequence
+            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x22 that isn't coming its way
+                read(fd, temp, sizeof(temp));
+                if(temp[0] != 0x22) {
+                    flag = true;
+                    break;
+                }
+            }
+            if(flag) {
+                // invalid sequence, reset
+                continue;
+            }else {
+                cout<<"got string init seq"<<endl;
+                /*
+                read(fd, temp, sizeof(temp)); // get the byte for the size
+                cout<<"got string init seq for length: "<<(int)temp[0]<< endl;
+                getNextBytes(fd, strBuf, temp[0]);
+                cout<<strBuf<<endl;
+                 */
+                // now we have to read into strBuf until we see a null or newline or whatever
+                j = 0;
+                while(((char)temp[0] != '\n') && j < 256) {
+                    read(fd, temp, sizeof(temp));
+                    strBuf[j] = (char)temp[0];
+                    j++;
+                }
+                cout<<strBuf<<endl;
+                memset(strBuf, 0, sizeof(strBuf));
+            }
+        }else{
+            printf("got value: 0x%x\n", temp[0]);
+            continue;
+        }
+        /*
         char buf[1024];
         int n = read(fd, buf, sizeof(buf));
         outFile.write(buf, n);
 //        cout << "Read and wrote "<< n<<" bytes."<<endl;
+         */
     }
     outFile.close();
 }
