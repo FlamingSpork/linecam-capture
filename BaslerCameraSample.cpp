@@ -41,6 +41,8 @@ struct accelData{
 }; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
 // this depends on little endian, like on x64 and the samd21 chip
 
+struct accelData latestAccel;
+
 void getNextBytes(int fd, char* buf, size_t count) {
     for(size_t i = 0; i<count; i++) {
         read(fd, (void*)&buf[i], 1);
@@ -74,6 +76,7 @@ void handleSerial(int fd, string outFileName) {
                 getNextBytes(fd, parseBuf, 16);
                 d = (struct accelData*)parseBuf;
                 outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
+                memcpy((void*)&latestAccel, d, 16);
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence
@@ -314,6 +317,7 @@ int main(int argc, char* argv[])
         CGrabResultPtr ptrGrabResult;
         long lineCount = 0;
         int lastGain = gain;
+        int directionSelection = 0;
 
         int rows = camera.Height.GetValue(); // 256
         int cols = camera.Width.GetValue(); // 2048
@@ -407,8 +411,27 @@ int main(int argc, char* argv[])
                 }
                 ImGui::End();
             }
-            //TODO: get most recent accelerometer data and display it?
-            // would require inter-thread communication, but it *is* possible since we're parsing here
+
+            {
+                ImGui::Begin("Accelerometer");
+                ImGui::Text("x: %.2f, y: %.2f, z: %.2f", latestAccel.x, latestAccel.y, latestAccel.z);
+                ImGui::Text("Motion direction:");
+                ImGui::RadioButton("Unspecified", &directionSelection, 0);
+                ImGui::RadioButton("+X", &directionSelection, 1);
+                ImGui::SameLine();
+                ImGui::RadioButton("+Y", &directionSelection, 2);
+                ImGui::SameLine();
+                ImGui::RadioButton("+Z", &directionSelection, 3);
+
+                ImGui::RadioButton("-X", &directionSelection, 4);
+                ImGui::SameLine();
+                ImGui::RadioButton("-Y", &directionSelection, 5);
+                ImGui::SameLine();
+                ImGui::RadioButton("-Z", &directionSelection, 6);
+
+                ImGui::End();
+            }
+
             if(gain != lastGain) {
                 camera.GainRaw.TrySetValue(gain);
                 lastGain = gain;
@@ -436,6 +459,33 @@ int main(int argc, char* argv[])
 
         metaFile << "capture.LineCount," << lineCount << endl;
         metaFile << "capture.DurationMicroSec," << duration << endl;
+        switch(directionSelection) {
+            case 1:
+                metaFile<<"accelerometer.Direction,PX"<<endl;
+                break;
+            case 2:
+                metaFile<<"accelerometer.Direction,PY"<<endl;
+                break;
+            case 3:
+                metaFile<<"accelerometer.Direction,PZ"<<endl;
+                break;
+            case 4:
+                metaFile<<"accelerometer.Direction,NX"<<endl;
+                break;
+            case 5:
+                metaFile<<"accelerometer.Direction,NY"<<endl;
+                break;
+            case 6:
+                metaFile<<"accelerometer.Direction,NZ"<<endl;
+                break;
+            default:
+                metaFile<<"accelerometer.Direction,unspecified"<<endl;
+                break;
+            case 0:
+                metaFile<<"accelerometer.Direction,unspecified"<<endl;
+                break;
+        }
+
         metaFile.close();
 
         ImGui_ImplOpenGL3_Shutdown();
