@@ -60,6 +60,9 @@ int main(int argc, char* argv[]) {
         cerr << "Error from tcsetattr: "<< strerror(errno)<< endl;
         return 1;
     }
+    cout <<"Flushing serial port, please wait..."<<endl;
+    sleep(2); //required to make flush work, for some reason
+    tcflush(fd,TCIOFLUSH);
 
     cout << "Port open???" << endl;
     ofstream outFile("out.txt");
@@ -70,12 +73,15 @@ int main(int argc, char* argv[]) {
     // our read sizes are random, but guaranteed to be at least one byte
     // we need a way to run until we've gotten the desired number of bytes
 
-    char parseBuf[32]; // oversized
-    char strBuf[256];  // max representable size
+    char parseBuf[16];
+    char strBuf[1024];
     uint8_t temp[1];
     bool flag = false;
     struct accelData* d;
     int j = 0;
+
+    sleep(1); // to mimic time to start the gui and camera capture
+    //tcflush(fd,TCIOFLUSH); // mandatory to make it not freak out
 
     while(runFlag) {
         flag = false;
@@ -95,10 +101,15 @@ int main(int argc, char* argv[]) {
                 // invalid sequence, reset
                 continue;
             }else {
-                cout<<"got data init seq"<< endl;
+                //cout<<"got data init seq"<< endl;
                 getNextBytes(fd, parseBuf, 16);
                 d = (struct accelData*)parseBuf;
+//                if(d->millis > 1000000) {
+//                    cout<<"oh no!"<<endl;
+//                    outFile<<"help!"<<endl;
+//                }
                 cout<<"time: "<<d->millis<<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
+                outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence
@@ -128,6 +139,7 @@ int main(int argc, char* argv[]) {
                     j++;
                 }
                 cout<<strBuf<<endl;
+                outFile<<strBuf<<endl;
                 memset(strBuf, 0, sizeof(strBuf));
             }
         }else{

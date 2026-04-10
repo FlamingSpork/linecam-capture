@@ -57,6 +57,14 @@ void handleSerial(int fd, string outFileName) {
     bool flag = false;
     struct accelData* d;
     int j = 0;
+
+    /*
+     * in the time it takes for the GUI to open and the camera to start capturing, the serial port buffer fills up and gives us weird values
+     * I think it's jumping forward and absolutely confusing my code
+     * this isn't a problem if we're running with text because that's sending fewer measurements and fewer bytes and the buffer doesn't fill
+     * (yes, text mode is more efficient in that respect, but we have plenty of bandwidth here and want to use it)
+     */
+    tcflush(fd,TCIOFLUSH); // needs to be the very last thing before we actually grab bytes
     while(capFlag) {
         flag = false;
         read(fd, temp, sizeof(temp));
@@ -75,6 +83,9 @@ void handleSerial(int fd, string outFileName) {
             }else {
                 getNextBytes(fd, parseBuf, 16);
                 d = (struct accelData*)parseBuf;
+//                if(d->millis > 1000000) {
+//                    outFile<<"help!"<<endl;
+//                }
                 outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
                 memcpy((void*)&latestAccel, d, 16); // copy it to the shared variable to avoid potential weirdness with threads
             }
@@ -335,12 +346,7 @@ int main(int argc, char* argv[])
             if (ptrGrabResult->GrabSucceeded())
             {
                 lineCount += ptrGrabResult->GetHeight();
-                // Access the image data.
-//                cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
-//                cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
-//                const uint8_t *pImageBuffer = (uint8_t *) ptrGrabResult->GetBuffer();
                 char *buf = (char*) ptrGrabResult->GetBuffer();
-//                cout << "Gray value of first pixel: " << (uint32_t) pImageBuffer[0] << endl << endl;
                 camFile.write(buf, ptrGrabResult->GetBufferSize());
                 cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes" << endl;
                 zeroHistogram(histogram);
