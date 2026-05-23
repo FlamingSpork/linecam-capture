@@ -290,6 +290,15 @@ int main(int argc, char* argv[])
 //        camera.OffsetY.TrySetToMinimum();
         camera.Width.TrySetToMaximum(); // get all the pixels!
 
+        bool color = false;
+
+        if(camera.GetDeviceInfo().GetModelName() == "ruL2098-10gc") {
+            camera.PixelFormat.SetValue(PixelFormat_RGB8Packed); // the other option is RGB8Planar, which makes processing much more annoying
+            color = true;
+        } else {
+            camera.PixelFormat.SetValue(PixelFormat_Mono8);
+        }
+
         int shutterSpeed = 1.0 / ((float)expTime / 1000000);
 
         // I hate how the least bad way to get and format a date and time is this mess
@@ -303,6 +312,8 @@ int main(int argc, char* argv[])
 
         ofstream metaFile(outDir + "/meta.csv");
         metaFile << "key,value" << endl;
+        metaFile << "camera.ModelName," << camera.GetDeviceInfo().GetModelName() << endl;
+        metaFile << "camera.PixelFormat," << camera.PixelFormat.ToStringOrDefault("err!");
         metaFile << "camera.Width," << camera.Width.ToStringOrDefault("err!") << endl;
         metaFile << "camera.Height," << camera.Height.ToStringOrDefault("err!") << endl;
         metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
@@ -351,23 +362,44 @@ int main(int argc, char* argv[])
                 cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes" << endl;
                 zeroHistogram(histogram);
 
-                int k = 0;
-                for(int i = cols; i > 0; i--) {
-                    for(int j = 0; j < rows; j++) {
-                        uint8_t pixel = buf[(j*cols) + i]; // this has to be unsigned or else the histogram indexing gets very upset
-                        // a char is signed in order to represent evil Inverse ASCII (we're scared of it)
+                if(color) {
+                    // we need to rotate it and add an alpha channel of 0xff
+                    int k = 0;
+                    for (int i = cols; i > 0; i--) {
+                        for (int j = 0; j < rows; j++) {
+                            uint8_t r = buf[ (j * cols * 3) + (i * 3) + 0];
+                            uint8_t g = buf[ (j * cols * 3) + (i * 3) + 1];
+                            uint8_t b = buf[ (j * cols * 3) + (i * 3) + 2];
 
-                        // time for the world's jankiest mono->rgba conversion
-                        // doing it in here saves time and memory over doing it as a second loop
-                        rgbaFrame[k*4 + 0] = pixel;
-                        rgbaFrame[k*4 + 1] = pixel;
-                        rgbaFrame[k*4 + 2] = pixel;
-                        rgbaFrame[k*4 + 3] = 0xff; // alpha channel
+                            rgbaFrame[k * 4 + 0] = r;
+                            rgbaFrame[k * 4 + 1] = g;
+                            rgbaFrame[k * 4 + 2] = b;
+                            rgbaFrame[k * 4 + 3] = 0xff;
+                            k++;
+                        }
+                    }
+                }else {
 
-                        histogram[ (int)pixel ] += 1.0f; // yes, I'm using the value of the pixel as the index for the histogram
-                        // since it's just one byte, it can't be greater than 255, and since it's uint, it can't be less than 0
+                    int k = 0;
+                    for (int i = cols; i > 0; i--) {
+                        for (int j = 0; j < rows; j++) {
+                            uint8_t pixel = buf[(j * cols) +
+                                                i]; // this has to be unsigned or else the histogram indexing gets very upset
+                            // a char is signed in order to represent evil Inverse ASCII (we're scared of it)
 
-                        k++;
+                            // time for the world's jankiest mono->rgba conversion
+                            // doing it in here saves time and memory over doing it as a second loop
+                            rgbaFrame[k * 4 + 0] = pixel;
+                            rgbaFrame[k * 4 + 1] = pixel;
+                            rgbaFrame[k * 4 + 2] = pixel;
+                            rgbaFrame[k * 4 + 3] = 0xff; // alpha channel
+
+                            // TODO: either make one histogram with values cooked down from RGB or make three histograms
+                            histogram[(int) pixel] += 1.0f; // yes, I'm using the value of the pixel as the index for the histogram
+                            // since it's just one byte, it can't be greater than 255, and since it's uint, it can't be less than 0
+
+                            k++;
+                        }
                     }
                 }
 
@@ -412,6 +444,7 @@ int main(int argc, char* argv[])
                 ImGui::Begin("Capture Control");
                 ImGui::Text("elapsed time = %lld s (%lld \u00B5s)", (elapsed / 1000000), elapsed);
                 ImGui::Text("line count = %ld", lineCount);
+                ImGui::Text( color ? "RGB8 Packed Color" : "Mono8" );
                 if(ImGui::Button("Stop Capture")) {
                     capFlag = false;
                 }
