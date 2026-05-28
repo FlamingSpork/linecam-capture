@@ -21,6 +21,12 @@ struct accelData{
 }; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
 // this depends on little endian, like on x64 and the samd21 chip
 
+struct accelData2 {
+    float x;
+    float y;
+    float z;
+};
+
 void getNextBytes(int fd, char* buf, size_t count) {
     for(size_t i = 0; i<count; i++) {
         read(fd, (void*)&buf[i], 1);
@@ -79,6 +85,7 @@ int main(int argc, char* argv[]) {
     bool flag = false;
     struct accelData* d;
     int j = 0;
+    uint32_t lastTime = 0;
 
     sleep(1); // to mimic time to start the gui and camera capture
     //tcflush(fd,TCIOFLUSH); // mandatory to make it not freak out
@@ -108,8 +115,9 @@ int main(int argc, char* argv[]) {
 //                    cout<<"oh no!"<<endl;
 //                    outFile<<"help!"<<endl;
 //                }
-                cout<<"time: "<<d->millis<<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
+                cout<<"time: "<<d->millis<<" dt: "<<d->millis-lastTime<<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
                 outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
+                lastTime = d->millis;
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence
