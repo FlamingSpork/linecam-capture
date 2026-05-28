@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <fstream>
 #include <iomanip>
+#include <chrono>
 
 using namespace std;
 
@@ -25,7 +26,7 @@ struct accelData2 {
     float x;
     float y;
     float z;
-};
+}; // 12
 
 void getNextBytes(int fd, char* buf, size_t count) {
     for(size_t i = 0; i<count; i++) {
@@ -83,12 +84,15 @@ int main(int argc, char* argv[]) {
     char strBuf[1024];
     uint8_t temp[1];
     bool flag = false;
-    struct accelData* d;
+    struct accelData2* d;
     int j = 0;
-    uint32_t lastTime = 0;
+    //uint32_t lastTime = 0;
 
     sleep(1); // to mimic time to start the gui and camera capture
-    //tcflush(fd,TCIOFLUSH); // mandatory to make it not freak out
+    tcflush(fd,TCIOFLUSH); // mandatory to make it not freak out
+
+    auto startTime = chrono::high_resolution_clock::now();
+    auto lastTime = startTime;
 
     while(runFlag) {
         flag = false;
@@ -109,15 +113,18 @@ int main(int argc, char* argv[]) {
                 continue;
             }else {
                 //cout<<"got data init seq"<< endl;
-                getNextBytes(fd, parseBuf, 16);
-                d = (struct accelData*)parseBuf;
+                getNextBytes(fd, parseBuf, 12);
+                d = (struct accelData2*)parseBuf;
 //                if(d->millis > 1000000) {
 //                    cout<<"oh no!"<<endl;
 //                    outFile<<"help!"<<endl;
 //                }
-                cout<<"time: "<<d->millis<<" dt: "<<d->millis-lastTime<<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
-                outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
-                lastTime = d->millis;
+                auto currentTime = chrono::high_resolution_clock::now();
+                long millis = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
+                cout<<"time: "<<millis<<" dt: "<< chrono::duration_cast<chrono::milliseconds >(currentTime - lastTime).count() <<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
+                outFile<<"A"<<millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
+                //lastTime = d->millis;
+                lastTime = currentTime;
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence

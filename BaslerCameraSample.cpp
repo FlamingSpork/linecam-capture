@@ -34,11 +34,10 @@ void handleSigint(int s) {
 }
 
 struct accelData{
-    uint32_t millis; // was unsigned long over on the arduino, but that can't be guaranteed
     float x;
     float y;
     float z;
-}; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
+}; // 3*4 bytes (float) = 12 bytes
 // this depends on little endian, like on x64 and the samd21 chip
 
 struct accelData latestAccel;
@@ -57,6 +56,9 @@ void handleSerial(int fd, string outFileName) {
     bool flag = false;
     struct accelData* d;
     int j = 0;
+    auto startTime = chrono::high_resolution_clock::now();
+    auto currentTime = startTime;
+    long long time = 0;
 
     /*
      * in the time it takes for the GUI to open and the camera to start capturing, the serial port buffer fills up and gives us weird values
@@ -81,13 +83,15 @@ void handleSerial(int fd, string outFileName) {
                 // invalid sequence, reset
                 continue;
             }else {
-                getNextBytes(fd, parseBuf, 16);
+                getNextBytes(fd, parseBuf, 12);
                 d = (struct accelData*)parseBuf;
 //                if(d->millis > 1000000) {
 //                    outFile<<"help!"<<endl;
 //                }
-                outFile<<"A"<<d->millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
-                memcpy((void*)&latestAccel, d, 16); // copy it to the shared variable to avoid potential weirdness with threads
+                currentTime = chrono::high_resolution_clock::now();
+                time = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
+                outFile<<"A"<<time<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
+                memcpy((void*)&latestAccel, d, 12); // copy it to the shared variable to avoid potential weirdness with threads
             }
         }else if(temp[0] == (uint8_t)0x22) {
             // this could also be the start of a valid sequence
@@ -322,6 +326,7 @@ int main(int argc, char* argv[])
         metaFile << "serial.Protocol,binary"<<endl;
         metaFile << "serial.OutputFormat,text"<<endl;
         metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
+        metaFile << "serial.TimeUnit,microsecond"<<endl;
 
         fstream camFile;
         camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
@@ -339,6 +344,7 @@ int main(int argc, char* argv[])
         CGrabResultPtr ptrGrabResult;
         long lineCount = 0;
         int lastGain = gain;
+        int maxGain = camera.GainRaw.GetMax(); // grayscale: 800 max, color: 500 max; gets rather upset if exceeded
         int directionSelection = 0;
 
         int rows = camera.Height.GetValue(); // 256
@@ -421,7 +427,7 @@ int main(int argc, char* argv[])
                 ImGui::Begin("Preview");
                 ImGui::Text("size = %d x %d", rows, cols);
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-                ImGui::SliderInt("Gain", &gain, 0, 800);
+                ImGui::SliderInt("Gain", &gain, 0, maxGain);
                 ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
             }

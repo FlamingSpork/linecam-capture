@@ -18,7 +18,15 @@ struct accelData{
   float z;
 }; // 4 bytes (unsigned long) + 3*4 bytes (float) = 16 bytes
 
-struct accelData currentData;
+struct accelData2 {
+  float x;
+  float y;
+  float z;
+}; // 12 bytes
+
+struct accelData2 currentData;
+
+long long i = 0;
 
 Adafruit_LSM6DSO32 dso32;
 Adafruit_GPS GPS(&Wire);
@@ -167,33 +175,38 @@ void loop() {
   structure: 0x11 0x11 0x11 0x11 <data>
   <data> is always a fixed length (16 bytes), so we don't need to signal its end
 
-  we signal a string with 0x22 0x22 0x22 0x22 <length (1 byte)> <str>
+  we signal a string with 0x22 0x22 0x22 0x22 <str> <\n>
   */
   dso32.readAcceleration(currentData.x, currentData.y, currentData.z); // this requires range to be ±4G and outputs in Gs
   //currentData.x = 11.11;
   //currentData.y = 22.22;
   //currentData.z = 33.33;
-  currentData.millis = millis();
+  //currentData.millis = millis();
   Serial.write(0x11);
   Serial.write(0x11);
   Serial.write(0x11);
   Serial.write(0x11);
-  Serial.write((uint8_t*)&currentData, sizeof(struct accelData));
+  Serial.write((uint8_t*)&currentData, sizeof(struct accelData2));
 
-  if (GPS.available()) {
+  // instead of checking for new gps data every single loop, we only do it every other time
+  // since the gps is connected over i2c, we're actually getting gps data 32 bytes at a time, not the 1 byte at a time
+  // the GPS.read() or .available() functions claim
+  // one might think that doing this even less frequently than every other time would be better, but it is not in fact better
+  if (i & 1) {
     char c = GPS.read();
     if (GPS.newNMEAreceived()) {
       Serial.write(0x22);
-    Serial.write(0x22);
-    Serial.write(0x22);
-    Serial.write(0x22);
-    //Serial.write((uint8_t)GPS.available());
-    // a tricky thing here is if we print the NMEA sentence, or data
-    // we end up not listening and catching other sentences!
-    // so be very wary if using OUTPUT_ALLDATA and trying to print out data
-    Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
-    //if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
-    //  return; // we can fail to parse a sentence in which case we should just wait for another
+      Serial.write(0x22);
+      Serial.write(0x22);
+      Serial.write(0x22);
+      //Serial.write((uint8_t)GPS.available());
+      // a tricky thing here is if we print the NMEA sentence, or data
+      // we end up not listening and catching other sentences!
+      // so be very wary if using OUTPUT_ALLDATA and trying to print out data
+      Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+      //if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
+      //  return; // we can fail to parse a sentence in which case we should just wait for another
+    }
   }
-  }
+  i++;
 }
