@@ -317,7 +317,7 @@ int main(int argc, char* argv[])
         ofstream metaFile(outDir + "/meta.csv");
         metaFile << "key,value" << endl;
         metaFile << "camera.ModelName," << camera.GetDeviceInfo().GetModelName() << endl;
-        metaFile << "camera.PixelFormat," << camera.PixelFormat.ToStringOrDefault("err!");
+        metaFile << "camera.PixelFormat," << camera.PixelFormat.ToStringOrDefault("err!") << endl;
         metaFile << "camera.Width," << camera.Width.ToStringOrDefault("err!") << endl;
         metaFile << "camera.Height," << camera.Height.ToStringOrDefault("err!") << endl;
         metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
