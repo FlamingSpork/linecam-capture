@@ -4,11 +4,10 @@ include(CMakePrintHelpers)
 
 project(PylonSamples VERSION 0.0)
 find_package(pylon)
-find_package( OpenCV REQUIRED )
 find_package(OpenGL)
 
-add_executable( BaslerCameraSample
-  BaslerCameraSample.cpp
+add_executable( LinecamCapture
+  LinecamCapture.cpp
   BaslerCameraCameraParams.cpp
   BaslerCameraEventParams.cpp
   BaslerCameraChunkDataParams.cpp
@@ -23,18 +22,15 @@ add_executable( BaslerCameraSample
   imgui/backends/imgui_impl_opengl3.cpp
 )
 include_directories(imgui)
-target_link_libraries( BaslerCameraSample
+target_link_libraries( LinecamCapture
         PRIVATE
         pylon::pylon
         pthread
         glfw
         OpenGL::OpenGL
         )
-install( TARGETS BaslerCameraSample )
+install( TARGETS LinecamCapture )
 
 add_executable( SerialReader
         SerialReader.cpp
 )
-
-add_executable(grindstone grindstone.cpp)
-target_link_libraries(grindstone ${OpenCV_LIBS})
