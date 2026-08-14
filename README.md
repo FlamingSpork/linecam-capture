@@ -1,5 +1,8 @@
 # Line Camera Capture Tool
 
+## To clone
+This repository contains `imgui` as a submodule, so be sure to clone with `git clone --recurse-submodules` to get everything
+
 ## Build deps
 Requires [Basler Pylon](https://www.baslerweb.com/en-us/downloads/software/1932603569/?downloadCategory.values.label.data=pylon) to communicate with the camera.
 I used v25.10, but other versions are likely to work
