@@ -12,7 +12,10 @@ apt-get install libglfw3-dev libopengl-dev build-essential cmake
 
 ## To build
 ```
-cmake .
+mkdir cmake-build-debug
+cd cmake-build-debug
+cmake ..
+make -j`nproc`
 ```
 
 ## To run
