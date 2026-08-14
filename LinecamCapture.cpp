@@ -85,9 +85,6 @@ void handleSerial(int fd, string outFileName) {
             }else {
                 getNextBytes(fd, parseBuf, 12);
                 d = (struct accelData*)parseBuf;
-//                if(d->millis > 1000000) {
-//                    outFile<<"help!"<<endl;
-//                }
                 currentTime = chrono::high_resolution_clock::now();
                 time = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
                 outFile<<"A"<<time<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
@@ -262,11 +259,9 @@ int main(int argc, char* argv[])
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-//    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
-    //ImGui::StyleColorsLight();
 
     // Setup scaling
     ImGuiStyle& style = ImGui::GetStyle();
@@ -290,8 +285,6 @@ int main(int argc, char* argv[])
         camera.ExposureTimeRaw.SetValue(expTime);
         camera.GainRaw.SetValue(gain);
         camera.Height.SetValue(256);
-//        camera.OffsetX.TrySetToMinimum();
-//        camera.OffsetY.TrySetToMinimum();
         camera.Width.TrySetToMaximum(); // get all the pixels!
 
         bool color = false;
@@ -334,10 +327,6 @@ int main(int argc, char* argv[])
         auto startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
         thread serialThread(handleSerial, fd, outDir+"/serial.txt");
 
-        // Start the grabbing of c_countOfImagesToGrab images.
-        // The camera device is parameterized with a default configuration which
-        // sets up free-running continuous acquisition.
-//        camera.StartGrabbing( c_countOfImagesToGrab);
         camera.StartGrabbing();
 
         // This smart pointer will receive the grab result data.
