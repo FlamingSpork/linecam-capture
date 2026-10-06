@@ -286,6 +286,7 @@ int main(int argc, char* argv[])
         camera.GainRaw.SetValue(gain);
         camera.Height.SetValue(256);
         camera.Width.TrySetToMaximum(); // get all the pixels!
+        camera.TestImageSelector.SetValue(TestImageSelector_Off);
 
         bool color = false;
 
@@ -339,14 +340,15 @@ int main(int argc, char* argv[])
         int rows = camera.Height.GetValue(); // 256
         int cols = camera.Width.GetValue(); // 2048
         float histogram[256]; // assumes 8 bit mono pixels!
+        zeroHistogram(histogram);
 
         char *rgbaFrame = (char*)malloc(rows*cols*4);
+        GLuint my_image_texture = 0;
 
         while (capFlag)
         {
             // Wait for an image and then retrieve it. A timeout of 5000 ms is used.
             camera.RetrieveResult( 5000, ptrGrabResult, TimeoutHandling_ThrowException);
-            GLuint my_image_texture = 0;
 
             // Image grabbed successfully?
             if (ptrGrabResult->GrabSucceeded())
@@ -417,6 +419,7 @@ int main(int argc, char* argv[])
                 ImGui::Text("size = %d x %d", rows, cols);
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
                 ImGui::SliderInt("Gain", &gain, 0, maxGain);
+                // size provided here is the display size that the texture will be scaled to as needed
                 ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
             }
@@ -529,6 +532,8 @@ int main(int argc, char* argv[])
 
         glfwDestroyWindow(window);
         glfwTerminate();
+
+        free(rgbaFrame);
 
         cout << endl;
         cout << "Final stats:" << endl;

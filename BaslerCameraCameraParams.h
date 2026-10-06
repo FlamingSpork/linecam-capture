@@ -430,15 +430,15 @@ namespace BaslerCameraCameraParams_Params
         TemperatureSelector_Sensorboard  //!< Temperature on sensor board - Applies to: ruL2048-19gm
     };
 
-    //! Valid values for TestImageSelector
     enum TestImageSelectorEnums
     {
-        TestImageSelector_Off,  //!< Sets the camera's test image generation capability to disabled - Applies to: ruL2048-19gm
-        TestImageSelector_Testimage1,  //!< Sets the camera to generate and transmit test images with a test image 1 pattern - Applies to: ruL2048-19gm
-        TestImageSelector_Testimage2,  //!< Sets the camera to generate and transmit test images with a test image 2 pattern - Applies to: ruL2048-19gm
-        TestImageSelector_Testimage3,  //!< Sets the camera to generate and transmit test images with a test image 3 pattern - Applies to: ruL2048-19gm
-        TestImageSelector_Testimage4,  //!< Sets the camera to generate and transmit test images with a test image 4 pattern - Applies to: ruL2048-19gm
-        TestImageSelector_Testimage5  //!< Sets the camera to generate and transmit test images with a test image 5 pattern - Applies to: ruL2048-19gm
+        TestImageSelector_Off,  //!< Sets the camera's test image generation capability to disabled - Applies to: Emulation, ruL2098-10gc
+        TestImageSelector_Testimage1,  //!< Sets the camera to generate and transmit test images with a test image 1 pattern - Applies to: Emulation, ruL2098-10gc
+        TestImageSelector_Testimage2,  //!< Sets the camera to generate and transmit test images with a test image 2 pattern - Applies to: Emulation, ruL2098-10gc
+        TestImageSelector_Testimage3,  //!< Sets the camera to generate and transmit test images with a test image 3 pattern - Applies to: ruL2098-10gc
+        TestImageSelector_Testimage4,  //!< Sets the camera to generate and transmit test images with a test image 4 pattern - Applies to: ruL2098-10gc
+        TestImageSelector_Testimage5,  //!< Sets the camera to generate and transmit test images with a test image 5 pattern - Applies to: ruL2098-10gc
+        TestImageSelector_Testimage6  //!< Sets the camera to generate and transmit test images with a test image 6 pattern - Applies to: ruL2098-10gc
     };
 
     //! Valid values for TriggerActivation
