@@ -18,6 +18,10 @@
 #include "imgui/backends/imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h> // apt-get install libglfw3-dev libopengl-dev
 
+#include "wiringPi.h" // https://github.com/WiringPi/WiringPi
+#include "wiringPiI2C.h"
+#include "SensorConstants.h"
+
 // Settings to use any camera type.
 #include "BaslerCamera.h"
 #include "BaslerCameraArray.h"
@@ -48,74 +52,149 @@ void getNextBytes(int fd, char* buf, size_t count) {
     }
 }
 
-void handleSerial(int fd, string outFileName) {
-    ofstream outFile(outFileName);
-    char parseBuf[16];
-    char strBuf[1024];
-    uint8_t temp[1];
-    bool flag = false;
-    struct accelData* d;
-    int j = 0;
-    auto startTime = chrono::high_resolution_clock::now();
-    auto currentTime = startTime;
-    long long time = 0;
+bool sliceWrite(int fd, uint8_t addr, uint8_t bits, uint8_t shift, uint32_t data) {
+    // ripped from Adafruit_BusIO_Register.cpp
+    uint8_t val = wiringPiI2CReadReg8(fd, addr);
+    uint32_t mask = (1 << (bits)) - 1;
+    data &= mask;
 
-    /*
-     * in the time it takes for the GUI to open and the camera to start capturing, the serial port buffer fills up and gives us weird values
-     * I think it's jumping forward and absolutely confusing my code
-     * this isn't a problem if we're running with text because that's sending fewer measurements and fewer bytes and the buffer doesn't fill
-     * (yes, text mode is more efficient in that respect, but we have plenty of bandwidth here and want to use it)
-     */
-    tcflush(fd,TCIOFLUSH); // needs to be the very last thing before we actually grab bytes
+    mask <<= shift;
+    val &= ~mask;          // remove the current data at that spot
+    val |= data << shift; // and add in the new data
+    return wiringPiI2CWriteReg8(fd, addr, val);
+}
+
+int beginI2CAccel() {
+    wiringPiSetupGpio();
+    // /dev/i2c-i is board pins 3 (SDA) and 5 (SCL)
+    // to work best, it needs to be set to maximum speed
+    // echo "dtparam=i2c_arm=on,i2c_arm_baudrate=1000000" >> /boot/firmware/config.txt
+    int fd = wiringPiI2CSetupInterface("/dev/i2c-1", 0x6a);
+
+    // Adafruit_LSM6DSO32::_init
+    uint8_t chipId = wiringPiI2CReadReg8(fd, LSM6DS_WHOAMI);
+    if(chipId != LSM6DSO32_CHIP_ID) {
+        cerr<< "chip id is: "<< chipId << " instead of "<< LSM6DSO32_CHIP_ID<<endl;
+    }
+    // soft reset
+    sliceWrite(fd, LSM6DS_CTRL3_C, 1, 0, 1);
+    // set block data update
+    sliceWrite(fd, LSM6DSOX_CTRL3_C, 1, 6, 1);
+    // disable i3c
+    sliceWrite(fd, LSM6DSOX_CTRL9_XL, 1, 1, 1);
+
+    // Adafruit_LSM6DS::_init
+    // set accel data rate
+    sliceWrite(fd, LSM6DS_CTRL1_XL, 4, 4, LSM6DS_RATE_6_66K_HZ);
+    // set accel range
+    sliceWrite(fd, LSM6DS_CTRL1_XL, 2, 2, LSM6DSO32_ACCEL_RANGE_4_G);
+    // set gyro data rate
+    sliceWrite(fd, LSM6DS_CTRL2_G, 4, 4, LSM6DS_RATE_104_HZ);
+    // set gyro range
+    sliceWrite(fd, LSM6DS_CTRL2_G, 4, 0, LSM6DS_GYRO_RANGE_125_DPS);
+
+    return fd;
+}
+
+void handleI2CAccel(int fd, const string& outFileName) {
+    ofstream outFile(outFileName);
+    auto startTime = chrono::high_resolution_clock::now();
+    auto lastTime = startTime;
+    auto currentTime = chrono::high_resolution_clock::now();
+    long micros = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
+    int16_t data[3];
+    float x, y, z;
+    struct accelData d;
     while(capFlag) {
-        flag = false;
+        wiringPiI2CReadBlockData(fd, LSM6DS_OUTX_L_A, reinterpret_cast<uint8_t *>(data), 6);
+        x = data[0] * 4.0 / 32768.0;
+        y = data[1] * 4.0 / 32768.0;
+        z = data[2] * 4.0 / 32768.0;
+        currentTime = chrono::high_resolution_clock::now();
+        micros = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
+        outFile<<"A"<<micros<<","<<x<<","<<y<<","<<z<<endl;
+        //cout << "time: " << micros << " dt: " << chrono::duration_cast<chrono::microseconds >(currentTime - lastTime).count() << " x: " << x << " y: " << y << " z: " << z << endl;
+        d.x = x;
+        d.y = y;
+        d.z = z;
+        memcpy((void*)&latestAccel, (void*)&d, 12); // copy it to the shared variable to avoid potential weirdness with threads
+        // despite this being the wire format for the old serial protocol, it's still reasonable for this purpose
+        lastTime = currentTime;
+    }
+    outFile.close();
+}
+
+int writeString(int fd, string str) {
+    return write(fd, str.c_str(), str.length());
+}
+
+int beginSerialGPS(const char* serialPort) {
+    int fd = open(serialPort, O_RDWR | O_NOCTTY | O_SYNC);
+    if (fd < 0){
+        cerr << "failed to open!" << endl;
+        return -1;
+    }
+
+    struct termios tty;
+    if(tcgetattr(fd, &tty) != 0) {
+        cerr << "Error from tcgetattr: " << strerror(errno) << endl;
+        return -1;
+    }
+
+    // gps wants 9600 baud, 8 data bits, no parity, one stop bit, no xon/xoff
+    // time for some ancient C runes that I need to commune with the spirit of Bell Labs to understand
+    cfsetospeed(&tty, B9600);
+    cfsetispeed(&tty, B9600);
+
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8; // 8 bit chars
+    tty.c_iflag &= ~IGNBRK; // no break processing
+    tty.c_lflag = 0; // no signaling chars, no echo, no canonical processing
+    tty.c_oflag = 0; // no remapping or delays
+    tty.c_cc[VMIN] = 0; // do not block on read
+    tty.c_cc[VTIME] = 5; // 0.5s read timeout
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // no xon/xoff control
+    tty.c_cflag |= (CLOCAL | CREAD); // ignore modem controls
+    tty.c_cflag &= ~(PARENB | PARODD); // no parity
+    tty.c_cflag &= ~CSTOPB; // one stop bit?????
+    tty.c_cflag &= ~CRTSCTS;
+    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+        cerr << "Error from tcsetattr: "<< strerror(errno)<< endl;
+        return -1;
+    }
+    cout <<"Flushing serial port, please wait..."<<endl;
+    sleep(2); //required to make flush work, for some reason
+    tcflush(fd,TCIOFLUSH);
+
+    cout << "Port open???" << endl;
+    writeString(fd, PMTK_SET_NMEA_OUTPUT_RMCONLY);
+    writeString(fd, PMTK_SET_NMEA_UPDATE_5HZ);
+    writeString(fd, PMTK_API_SET_FIX_CTL_5HZ);
+    writeString(fd, PGCMD_NOANTENNA);
+    return fd;
+}
+
+void handleSerialGPS(int fd, string outFileName) {
+    ofstream outFile(outFileName);
+    uint8_t temp[1];
+    char strBuf[1024];
+    int j = 0;
+
+    tcflush(fd,TCIOFLUSH);
+
+    while(capFlag) {
         read(fd, temp, sizeof(temp));
-        if(temp[0] == 0x11) {
-            // this could be the start of a valid sequence
-            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x11 that isn't coming its way
-                read(fd, temp, sizeof(temp));
-                if(temp[0] != 0x11) {
-                    flag = true;
-                    break; // this only breaks us out of one layer, so we use the flag to break out of the next one
-                }
-            }
-            if(flag) {
-                // invalid sequence, reset
-                continue;
-            }else {
-                getNextBytes(fd, parseBuf, 12);
-                d = (struct accelData*)parseBuf;
-                currentTime = chrono::high_resolution_clock::now();
-                time = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
-                outFile<<"A"<<time<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
-                memcpy((void*)&latestAccel, d, 12); // copy it to the shared variable to avoid potential weirdness with threads
-            }
-        }else if(temp[0] == (uint8_t)0x22) {
-            // this could also be the start of a valid sequence
-            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x22 that isn't coming its way
-                read(fd, temp, sizeof(temp));
-                if(temp[0] != 0x22) {
-                    flag = true;
-                    break;
-                }
-            }
-            if(flag) {
-                // invalid sequence, reset
-                continue;
-            }else {
-                // now we have to read into strBuf until we see a null or newline or whatever or we run out of space
-                j = 0;
-                while(((char)temp[0] != '\n') && j < 1024) {
-                    read(fd, temp, sizeof(temp));
-                    strBuf[j] = (char)temp[0];
-                    j++;
-                }
-                outFile<<strBuf<<endl;
-                memset(strBuf, 0, sizeof(strBuf)); // otherwise we'll leave garbage from the previous entry
-            }
-        }else{
-            continue; // not a valid sequence start, so try again until we get one
+        strBuf[0] = (char)temp[0];
+        j = 1;
+        while(((char)temp[0] != '\n') && j < 256) {
+            read(fd, temp, sizeof(temp));
+            strBuf[j] = (char)temp[0];
+            j++;
         }
+        if(strBuf[0] == '$') {
+            //cout << strBuf;
+            outFile << strBuf << endl; // TODO: check if this litters the file with extraneous newlines
+        }
+        memset(strBuf, 0, sizeof(strBuf));
     }
     outFile.close();
 }
@@ -193,44 +272,8 @@ int main(int argc, char* argv[])
     PylonInitialize();
     signal(SIGINT, handleSigint);
 
-    const char *serialPort = "/dev/ttyACM0";
-
-    int fd = open(serialPort, O_RDWR | O_NOCTTY | O_SYNC);
-    if (fd < 0){
-        cerr << "failed to open serial device!" << endl;
-        return 1;
-    }
-
-    struct termios tty;
-    if(tcgetattr(fd, &tty) != 0) {
-        cerr << "Error from tcgetattr: " << strerror(errno) << endl;
-        return 1;
-    }
-
-    // arduino wants 2 megabaud, 8 data bits, no parity, one stop bit, no xon/xoff
-    // time for some ancient C runes that I need to commune with the spirit of Bell Labs to understand
-    cfsetospeed(&tty, B2000000); // 2 megabaud goes brrrrr
-    cfsetispeed(&tty, B2000000);
-
-    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8; // 8 bit chars
-    tty.c_iflag &= ~IGNBRK; // no break processing
-    tty.c_lflag = 0; // no signaling chars, no echo, no canonical processing
-    tty.c_oflag = 0; // no remapping or delays
-    tty.c_cc[VMIN] = 0; // don't block on read
-    tty.c_cc[VTIME] = 5; // 0.5s read timeout
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // no xon/xoff control
-    tty.c_cflag |= (CLOCAL | CREAD); // ignore modem controls
-    tty.c_cflag &= ~(PARENB | PARODD); // no parity
-    tty.c_cflag &= ~CSTOPB; // one stop bit?????
-    tty.c_cflag &= ~CRTSCTS;
-    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
-        cerr << "Error from tcsetattr: "<< strerror(errno)<< endl;
-        return 1;
-    }
-    cout <<"Flushing serial port, please wait..."<<endl;
-    sleep(2); //required to make flush work, for some reason
-    tcflush(fd,TCIOFLUSH);
-    cout << "Serial port " << serialPort << " opened" << endl;
+    int i2cFd = beginI2CAccel();
+    int serialGPSfd = beginSerialGPS("/dev/ttyAMA0"); // UART0; board pins 8 (RXD), 10 (TXD)
 
     // we don't want to start the window until the serial port is ready so that it isn't sitting around blank
 
@@ -304,7 +347,7 @@ int main(int argc, char* argv[])
         auto tm = *localtime(&t);
         ostringstream oss;
         oss << put_time(&tm, "%m-%d_%H-%M");
-        string outDir = "/tmp/" + oss.str();
+        string outDir = "/home/pi/cap/" + oss.str();
         mkdir(outDir.c_str(), 0770);
         cout << "Created output dir " << outDir << endl;
 
@@ -317,7 +360,7 @@ int main(int argc, char* argv[])
         metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
         metaFile << "camera.ExposureTimeAbs," << camera.ExposureTimeAbs.ToStringOrDefault("err!") << endl;
         metaFile << "camera.GainRaw," << camera.GainRaw.ToStringOrDefault("err!") << endl;
-        metaFile << "serial.Protocol,binary"<<endl;
+        metaFile << "serial.Protocol,i2c"<<endl;
         metaFile << "serial.OutputFormat,text"<<endl;
         metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
         metaFile << "serial.TimeUnit,microsecond"<<endl;
@@ -326,7 +369,8 @@ int main(int argc, char* argv[])
         camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
 
         auto startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
-        thread serialThread(handleSerial, fd, outDir+"/serial.txt");
+        thread accelThread(handleI2CAccel, i2cFd, outDir+"/serial.txt"); // to make the changes less breaking, keep the serial.txt name
+        thread gpsThread(handleSerialGPS, serialGPSfd, outDir+"/gps.txt");
 
         camera.StartGrabbing();
 
@@ -493,7 +537,7 @@ int main(int argc, char* argv[])
         // Close the camera.
         camera.Close();
         camFile.close();
-        serialThread.join();
+        accelThread.join();
 
         metaFile << "capture.LineCount," << lineCount << endl;
         metaFile << "capture.DurationMicroSec," << duration << endl;

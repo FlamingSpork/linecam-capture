@@ -28,6 +28,7 @@ target_link_libraries( LinecamCapture
         pthread
         glfw
         OpenGL::OpenGL
+        PRIVATE wiringPi
         )
 install( TARGETS LinecamCapture )
 
