@@ -34,3 +34,13 @@ install( TARGETS LinecamCapture )
 add_executable( SerialReader
         SerialReader.cpp
 )
+
+add_executable(I2CReader
+        I2CReader.cpp)
+target_link_libraries(I2CReader
+        PRIVATE wiringPi)
+
+add_executable(I2CGPS
+        I2CGPS.cpp)
+target_link_libraries(I2CGPS
+        PRIVATE wiringPi)

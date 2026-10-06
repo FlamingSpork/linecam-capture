@@ -14,6 +14,19 @@ using namespace std;
 
 bool runFlag = true;
 
+#define PMTK_SET_NMEA_OUTPUT_RMCONLY                                           \
+  "$PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n" ///< turn on only the GPRMC sentence
+#define PMTK_SET_NMEA_UPDATE_200_MILLIHERTZ                                    \
+  "$PMTK220,5000*1B\r\n" ///< Once every 5 seconds, 200 millihertz.
+#define PMTK_SET_NMEA_UPDATE_1HZ "$PMTK220,1000*1F\r\n" ///<  1 Hz
+#define PMTK_SET_NMEA_UPDATE_2HZ "$PMTK220,500*2B\r\n"  ///<  2 Hz
+#define PMTK_SET_NMEA_UPDATE_5HZ "$PMTK220,200*2C\r\n"  ///<  5 Hz
+#define PMTK_SET_NMEA_UPDATE_10HZ "$PMTK220,100*2F\r\n" ///< 10 Hz
+#define PMTK_API_SET_FIX_CTL_1HZ "$PMTK300,1000,0,0,0,0*1C\r\n" ///< 1 Hz
+#define PMTK_API_SET_FIX_CTL_5HZ "$PMTK300,200,0,0,0,0*2F\r\n"  ///< 5 Hz
+// Can't fix position faster than 5 times a second!
+#define PGCMD_NOANTENNA "$PGCMD,33,0*6D\r\n" ///< don't show antenna status messages
+
 struct accelData{
     uint32_t millis; // was unsigned long over on the arduino, but that can't be guaranteed
     float x;
@@ -34,8 +47,12 @@ void getNextBytes(int fd, char* buf, size_t count) {
     }
 }
 
+int writeString(int fd, string str) {
+    return write(fd, str.c_str(), str.length());
+}
+
 int main(int argc, char* argv[]) {
-    int fd = open("/dev/ttyACM0", O_RDWR | O_NOCTTY | O_SYNC);
+    int fd = open("/dev/ttyAMA0", O_RDWR | O_NOCTTY | O_SYNC);
     if (fd < 0){
         cerr << "failed to open!" << endl;
         return 1;
@@ -47,10 +64,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // arduino wants 2 megabaud, 8 data bits, no parity, one stop bit, no xon/xoff
+    // gps wants 9600 baud, 8 data bits, no parity, one stop bit, no xon/xoff
     // time for some ancient C runes that I need to commune with the spirit of Bell Labs to understand
-    cfsetospeed(&tty, B2000000); // 2 megabaud goes brrrrr
-    cfsetispeed(&tty, B2000000);
+    cfsetospeed(&tty, B9600);
+    cfsetispeed(&tty, B9600);
 
     tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8; // 8 bit chars
     tty.c_iflag &= ~IGNBRK; // no break processing
@@ -91,81 +108,40 @@ int main(int argc, char* argv[]) {
     sleep(1); // to mimic time to start the gui and camera capture
     tcflush(fd,TCIOFLUSH); // mandatory to make it not freak out
 
+    writeString(fd, PMTK_SET_NMEA_OUTPUT_RMCONLY);
+    writeString(fd, PMTK_SET_NMEA_UPDATE_5HZ);
+    writeString(fd, PMTK_API_SET_FIX_CTL_5HZ);
+    writeString(fd, PGCMD_NOANTENNA);
+
     auto startTime = chrono::high_resolution_clock::now();
     auto lastTime = startTime;
 
-    while(runFlag) {
-        flag = false;
+    while(runFlag) {/*
+        read(fd, temp, sizeof(temp)); // get the byte for the size
+        cout<<"got string init seq for length: "<<(int)temp[0]<< endl;
+        getNextBytes(fd, strBuf, temp[0]);
+        cout<<strBuf<<endl;
+        */
+        // now we have to read into strBuf until we see a null or newline or whatever
         read(fd, temp, sizeof(temp));
-        //printf("got value: 0x%x\n", temp[0]);
-        //continue;
-        if(temp[0] == 0x11) {
-            // this could be the start of a valid sequence
-            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x11 that isn't coming its way
-                read(fd, temp, sizeof(temp));
-                if(temp[0] != 0x11) {
-                    flag = true;
-                    break;
-                }
-            }
-            if(flag) {
-                // invalid sequence, reset
-                continue;
-            }else {
-                //cout<<"got data init seq"<< endl;
-                getNextBytes(fd, parseBuf, 12);
-                d = (struct accelData2*)parseBuf;
-//                if(d->millis > 1000000) {
-//                    cout<<"oh no!"<<endl;
-//                    outFile<<"help!"<<endl;
-//                }
-                auto currentTime = chrono::high_resolution_clock::now();
-                long millis = chrono::duration_cast<chrono::microseconds >(currentTime - startTime).count();
-                cout<<"time: "<<millis<<" dt: "<< chrono::duration_cast<chrono::milliseconds >(currentTime - lastTime).count() <<" x: "<<d->x<<" y: "<<d->y<<" z: "<<d->z<<endl;
-                outFile<<"A"<<millis<<","<<d->x<<","<<d->y<<","<<d->z<<endl;
-                //lastTime = d->millis;
-                lastTime = currentTime;
-            }
-        }else if(temp[0] == (uint8_t)0x22) {
-            // this could also be the start of a valid sequence
-            for(int i = 0; i<3; i++){ // this has to run exactly this many times or else it'll wait forever for another 0x22 that isn't coming its way
-                read(fd, temp, sizeof(temp));
-                if(temp[0] != 0x22) {
-                    flag = true;
-                    break;
-                }
-            }
-            if(flag) {
-                // invalid sequence, reset
-                continue;
-            }else {
-                cout<<"got string init seq"<<endl;
-                /*
-                read(fd, temp, sizeof(temp)); // get the byte for the size
-                cout<<"got string init seq for length: "<<(int)temp[0]<< endl;
-                getNextBytes(fd, strBuf, temp[0]);
-                cout<<strBuf<<endl;
-                 */
-                // now we have to read into strBuf until we see a null or newline or whatever
-                j = 0;
-                while(((char)temp[0] != '\n') && j < 256) {
-                    read(fd, temp, sizeof(temp));
-                    strBuf[j] = (char)temp[0];
-                    j++;
-                }
-                cout<<strBuf<<endl;
-                outFile<<strBuf<<endl;
-                memset(strBuf, 0, sizeof(strBuf));
-            }
-        }else{
-            printf("got value: 0x%x\n", temp[0]);
-            continue;
+        strBuf[0] = (char)temp[0];
+        j = 1;
+        while(((char)temp[0] != '\n') && j < 256) {
+            read(fd, temp, sizeof(temp));
+            strBuf[j] = (char)temp[0];
+            j++;
         }
+        if(strBuf[0] == '$') {
+            cout << strBuf;
+            outFile << strBuf;
+        }
+        memset(strBuf, 0, sizeof(strBuf));
         /*
-        char buf[1024];
-        int n = read(fd, buf, sizeof(buf));
-        outFile.write(buf, n);
-//        cout << "Read and wrote "<< n<<" bytes."<<endl;
+       int n = read(fd, strBuf,sizeof(strBuf));
+       if(n>0) {
+           cout<<strBuf<<endl;
+       }
+       memset(strBuf, 0, sizeof(strBuf));
          */
     }
     outFile.close();
