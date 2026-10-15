@@ -216,32 +216,6 @@ void zeroHistogram(float histogram[]) {
     }
 }
 
-/**
- * feed me a rgba texture
- */
-bool LoadTextureFromMemory(const void* image_data, GLuint* out_texture, int width, int height)
-{
-    // Create a OpenGL texture identifier
-    GLuint image_texture;
-    glGenTextures(1, &image_texture);
-    glBindTexture(GL_TEXTURE_2D, image_texture);
-
-    // Setup filtering parameters for display
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_FALSE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-    // Upload pixels into texture
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    // for some reason, this only works correctly with GL_RGBA
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
-    *out_texture = image_texture;
-
-    return true;
-}
-
 
 int main(int argc, char* argv[])
 {
@@ -365,10 +339,7 @@ int main(int argc, char* argv[])
         metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
         metaFile << "serial.TimeUnit,microsecond"<<endl;
 
-//        fstream camFile;
-//        camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
-        //TODO: check if fstream can do O_DIRECT
-        string camFileName = outDir+"/cam.data";
+        string camFileName = outDir+"/cam.data"; // GNU IMP will import raw images from .data files
         // we use O_DIRECT | O_SYNC here to ensure that our data is cached minimally by the kernel
         // since we're not going to read it back particularly soon, there's not much reason for it to sit around in RAM,
         // unless we're producing faster than the drive can write, which hopefully isn't the case
@@ -394,6 +365,16 @@ int main(int argc, char* argv[])
 
         char *rgbaFrame = (char*)malloc(rows*cols*4);
         GLuint my_image_texture = 0;
+        glGenTextures(1, &my_image_texture);
+        glBindTexture(GL_TEXTURE_2D, my_image_texture);
+
+        // Setup filtering parameters for display
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_FALSE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
         while (capFlag)
         {
@@ -405,7 +386,6 @@ int main(int argc, char* argv[])
             {
                 lineCount += ptrGrabResult->GetHeight();
                 char *buf = (char*) ptrGrabResult->GetBuffer();
-//                camFile.write(buf, ptrGrabResult->GetBufferSize());
                 int wRet = write(camFile, buf, ptrGrabResult->GetBufferSize());
                 cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes, write() returned "<<wRet<< endl;
                 zeroHistogram(histogram);
@@ -451,7 +431,10 @@ int main(int argc, char* argv[])
                     }
                 }
 
-//                LoadTextureFromMemory(rgbaFrame, &my_image_texture, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth());
+                // Upload pixels into texture
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                // for some reason, this only works correctly with GL_RGBA
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaFrame);
             }
             else
             {
@@ -471,7 +454,7 @@ int main(int argc, char* argv[])
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
                 ImGui::SliderInt("Gain", &gain, 0, maxGain);
                 // size provided here is the display size that the texture will be scaled to as needed
-//                ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
+                ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
             }
 
@@ -494,6 +477,7 @@ int main(int argc, char* argv[])
                 ImGui::Text("elapsed time = %lld s (%lld \u00B5s)", (elapsed / 1000000), elapsed);
                 ImGui::Text("line count = %ld", lineCount);
                 ImGui::Text( color ? "RGB8 Packed Color" : "Mono8" );
+                ImGui::Text("image file size = %.1f GB", (lineCount * (color ? 3 : 1) * cols) / 1000000000.0);
                 if(ImGui::Button("Stop Capture")) {
                     capFlag = false;
                 }
@@ -543,7 +527,6 @@ int main(int argc, char* argv[])
         
         // Close the camera.
         camera.Close();
-//        camFile.close();
         close(camFile);
         accelThread.join();
 
