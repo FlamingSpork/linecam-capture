@@ -29,12 +29,14 @@
 using namespace Pylon;
 using namespace Pylon::BaslerCameraCameraParams_Params;
 
-bool capFlag = true;
+bool capFlag = false, runFlag = true, captureCleanup = false;
 
 using namespace std;
 
 void handleSigint(int s) {
     capFlag = false;
+    captureCleanup = true;
+    runFlag = false;
 }
 
 struct accelData{
@@ -316,45 +318,13 @@ int main(int argc, char* argv[])
 
         int shutterSpeed = 1.0 / ((float)expTime / 1000000);
 
-        // I hate how the least bad way to get and format a date and time is this mess
-        time_t t = time(nullptr);
-        auto tm = *localtime(&t);
-        ostringstream oss;
-        oss << put_time(&tm, "%m-%d_%H-%M");
-        string outDir = "/home/pi/cap/" + oss.str();
-        mkdir(outDir.c_str(), 0770);
-        cout << "Created output dir " << outDir << endl;
-
-        ofstream metaFile(outDir + "/meta.csv");
-        metaFile << "key,value" << endl;
-        metaFile << "camera.ModelName," << camera.GetDeviceInfo().GetModelName() << endl;
-        metaFile << "camera.PixelFormat," << camera.PixelFormat.ToStringOrDefault("err!") << endl;
-        metaFile << "camera.Width," << camera.Width.ToStringOrDefault("err!") << endl;
-        metaFile << "camera.Height," << camera.Height.ToStringOrDefault("err!") << endl;
-        metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
-        metaFile << "camera.ExposureTimeAbs," << camera.ExposureTimeAbs.ToStringOrDefault("err!") << endl;
-        metaFile << "camera.GainRaw," << camera.GainRaw.ToStringOrDefault("err!") << endl;
-        metaFile << "serial.Protocol,i2c"<<endl;
-        metaFile << "serial.OutputFormat,text"<<endl;
-        metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
-        metaFile << "serial.TimeUnit,microsecond"<<endl;
-
-        string camFileName = outDir+"/cam.data"; // GNU IMP will import raw images from .data files
-        // we use O_DIRECT | O_SYNC here to ensure that our data is cached minimally by the kernel
-        // since we're not going to read it back particularly soon, there's not much reason for it to sit around in RAM,
-        // unless we're producing faster than the drive can write, which hopefully isn't the case
-        int camFile = open(camFileName.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_DIRECT | O_SYNC, S_IRUSR | S_IWUSR);
-
-        auto startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
-        thread accelThread(handleI2CAccel, i2cFd, outDir+"/serial.txt"); // to make the changes less breaking, keep the serial.txt name
-        thread gpsThread(handleSerialGPS, serialGPSfd, outDir+"/gps.txt");
-
         camera.StartGrabbing();
 
         // This smart pointer will receive the grab result data.
         CGrabResultPtr ptrGrabResult;
         long lineCount = 0;
         int lastGain = gain;
+        int lastExpTime = expTime;
         int maxGain = camera.GainRaw.GetMax(); // grayscale: 800 max, color: 500 max; gets rather upset if exceeded
         int directionSelection = 0;
 
@@ -362,6 +332,12 @@ int main(int argc, char* argv[])
         int cols = camera.Width.GetValue(); // 2048
         float histogram[256]; // assumes 8 bit mono pixels!
         zeroHistogram(histogram);
+
+        bool captureStart = false;
+        thread accelThread, gpsThread;
+        ofstream metaFile;
+        int camFile;
+        auto startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
 
         char *rgbaFrame = (char*)malloc(rows*cols*4);
         GLuint my_image_texture = 0;
@@ -376,8 +352,45 @@ int main(int argc, char* argv[])
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
-        while (capFlag)
+        while (runFlag)
         {
+            // it looks ugly and gross to put this all inside the main loop, but I can't think of a better way that isn't terrible
+            if(captureStart) {
+                // I hate how the least bad way to get and format a date and time is this mess
+                time_t t = time(nullptr);
+                auto tm = *localtime(&t);
+                ostringstream oss;
+                oss << put_time(&tm, "%m-%d_%H-%M");
+                string outDir = "/home/pi/cap/" + oss.str();
+                mkdir(outDir.c_str(), 0770);
+                cout << "Created output dir " << outDir << endl;
+
+                metaFile = ofstream(outDir + "/meta.csv");
+                metaFile << "key,value" << endl;
+                metaFile << "camera.ModelName," << camera.GetDeviceInfo().GetModelName() << endl;
+                metaFile << "camera.PixelFormat," << camera.PixelFormat.ToStringOrDefault("err!") << endl;
+                metaFile << "camera.Width," << camera.Width.ToStringOrDefault("err!") << endl;
+                metaFile << "camera.Height," << camera.Height.ToStringOrDefault("err!") << endl;
+                metaFile << "camera.ExposureTimeRaw," << camera.ExposureTimeRaw.ToStringOrDefault("err!") << endl;
+                metaFile << "camera.ExposureTimeAbs," << camera.ExposureTimeAbs.ToStringOrDefault("err!") << endl;
+                metaFile << "camera.GainRaw," << camera.GainRaw.ToStringOrDefault("err!") << endl;
+                metaFile << "serial.Protocol,i2c"<<endl;
+                metaFile << "serial.OutputFormat,text"<<endl;
+                metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
+                metaFile << "serial.TimeUnit,microsecond"<<endl;
+
+                string camFileName = outDir+"/cam.data"; // GNU IMP will import raw images from .data files
+                // we use O_DIRECT | O_SYNC here to ensure that our data is cached minimally by the kernel
+                // since we're not going to read it back particularly soon, there's not much reason for it to sit around in RAM,
+                // unless we're producing faster than the drive can write, which hopefully isn't the case
+                camFile = open(camFileName.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_DIRECT | O_SYNC, S_IRUSR | S_IWUSR);
+
+                startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
+                accelThread = thread(handleI2CAccel, i2cFd, outDir+"/serial.txt"); // to make the changes less breaking, keep the serial.txt name
+                gpsThread = thread(handleSerialGPS, serialGPSfd, outDir+"/gps.txt");
+                captureStart = false;
+            }
+
             // Wait for an image and then retrieve it. A timeout of 5000 ms is used.
             camera.RetrieveResult( 5000, ptrGrabResult, TimeoutHandling_ThrowException);
 
@@ -386,8 +399,11 @@ int main(int argc, char* argv[])
             {
                 lineCount += ptrGrabResult->GetHeight();
                 char *buf = (char*) ptrGrabResult->GetBuffer();
-                int wRet = write(camFile, buf, ptrGrabResult->GetBufferSize());
-                cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes, write() returned "<<wRet<< endl;
+                if(capFlag) {
+                    int wRet = write(camFile, buf, ptrGrabResult->GetBufferSize());
+                    cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes, write() returned "
+                         << wRet << endl;
+                }
                 zeroHistogram(histogram);
 
                 if(color) {
@@ -431,7 +447,7 @@ int main(int argc, char* argv[])
                     }
                 }
 
-                // Upload pixels into texture
+                // Upload pixels into texture, reusing the same one every time (otherwise it leaks memory)
                 glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
                 // for some reason, this only works correctly with GL_RGBA
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaFrame);
@@ -452,7 +468,6 @@ int main(int argc, char* argv[])
                 ImGui::Begin("Preview");
                 ImGui::Text("size = %d x %d", rows, cols);
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-                ImGui::SliderInt("Gain", &gain, 0, maxGain);
                 // size provided here is the display size that the texture will be scaled to as needed
                 ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
@@ -465,6 +480,11 @@ int main(int argc, char* argv[])
                 ImGui::Text("shutter speed = 1/%d s", shutterSpeed);
                 // TODO: measure ISO equivalent for gain and put that here
                 // TODO: can I calculate an "EV" value here? maybe an average pixel value?
+                ImGui::SliderInt("Gain", &gain, 0, maxGain);
+                if(!capFlag) {
+                    // pylon gets upset if it's below 3 and the visible frame rate gets unusable above ~500
+                    ImGui::SliderInt("Exposure Time", &expTime, 3, 500);
+                }
                 ImGui::PlotHistogram("Histogram", histogram, 256);
                 ImGui::End();
             }
@@ -474,12 +494,21 @@ int main(int argc, char* argv[])
 
             {
                 ImGui::Begin("Capture Control");
-                ImGui::Text("elapsed time = %lld s (%lld \u00B5s)", (elapsed / 1000000), elapsed);
-                ImGui::Text("line count = %ld", lineCount);
-                ImGui::Text( color ? "RGB8 Packed Color" : "Mono8" );
-                ImGui::Text("image file size = %.1f GB", (lineCount * (color ? 3 : 1) * cols) / 1000000000.0);
-                if(ImGui::Button("Stop Capture")) {
-                    capFlag = false;
+                if(capFlag) {
+                    ImGui::Text("elapsed time = %lld s (%lld \u00B5s)", (elapsed / 1000000), elapsed);
+                    ImGui::Text("line count = %ld", lineCount);
+                    ImGui::Text(color ? "RGB8 Packed Color" : "Mono8");
+                    ImGui::Text("image file size = %.1f GB", (lineCount * (color ? 3 : 1) * cols) / 1000000000.0);
+                    if (ImGui::Button("Stop Capture")) {
+                        captureCleanup = true;
+                        capFlag = false;
+                    }
+                } else {
+                    ImGui::Text("capture not running!");
+                    if(ImGui::Button("Start Capture")) {
+                        captureStart = true;
+                        capFlag = true;
+                    }
                 }
                 ImGui::End();
             }
@@ -505,9 +534,26 @@ int main(int argc, char* argv[])
                 ImGui::End();
             }
 
+            {
+                ImGui::Begin("Program");
+                if(ImGui::Button("Exit LinecamCapture")) {
+                    runFlag = false;
+                    if(capFlag) {
+                        capFlag = false;
+                        captureCleanup = true;
+                    }
+                }
+                ImGui::End();
+            }
+
             if(gain != lastGain) {
                 camera.GainRaw.TrySetValue(gain);
                 lastGain = gain;
+            }
+            if(expTime != lastExpTime) {
+                camera.ExposureTimeRaw.SetValue(expTime);
+                lastExpTime = expTime;
+                shutterSpeed = 1.0 / ((float)expTime / 1000000);
             }
 
             // Rendering
@@ -520,47 +566,55 @@ int main(int argc, char* argv[])
 
             glfwSwapBuffers(window);
 
+            if(captureCleanup) {
+                auto endTime = chrono::high_resolution_clock::now();
+                long long duration = chrono::duration_cast<chrono::microseconds>(endTime - startTime).count();
+
+                close(camFile);
+                accelThread.join();
+                gpsThread.join();
+
+                metaFile << "capture.LineCount," << lineCount << endl;
+                metaFile << "capture.DurationMicroSec," << duration << endl;
+                switch(directionSelection) {
+                    case 1:
+                        metaFile<<"accelerometer.Direction,PX"<<endl;
+                        break;
+                    case 2:
+                        metaFile<<"accelerometer.Direction,PY"<<endl;
+                        break;
+                    case 3:
+                        metaFile<<"accelerometer.Direction,PZ"<<endl;
+                        break;
+                    case 4:
+                        metaFile<<"accelerometer.Direction,NX"<<endl;
+                        break;
+                    case 5:
+                        metaFile<<"accelerometer.Direction,NY"<<endl;
+                        break;
+                    case 6:
+                        metaFile<<"accelerometer.Direction,NZ"<<endl;
+                        break;
+                    default:
+                        metaFile<<"accelerometer.Direction,unspecified"<<endl;
+                        break;
+                    case 0:
+                        metaFile<<"accelerometer.Direction,unspecified"<<endl;
+                        break;
+                }
+
+                metaFile.close();
+
+                cout << endl;
+                cout << "Final stats:" << endl;
+                cout << "Line count: " << lineCount << endl;
+                cout << "Capture duration: " << duration / 1000000 << " seconds (" << duration << " µs)" << endl;
+                captureCleanup = false;
+            }
+
         }
 
-        auto endTime = chrono::high_resolution_clock::now();
-        long long duration = chrono::duration_cast<chrono::microseconds>(endTime - startTime).count();
-        
-        // Close the camera.
         camera.Close();
-        close(camFile);
-        accelThread.join();
-
-        metaFile << "capture.LineCount," << lineCount << endl;
-        metaFile << "capture.DurationMicroSec," << duration << endl;
-        switch(directionSelection) {
-            case 1:
-                metaFile<<"accelerometer.Direction,PX"<<endl;
-                break;
-            case 2:
-                metaFile<<"accelerometer.Direction,PY"<<endl;
-                break;
-            case 3:
-                metaFile<<"accelerometer.Direction,PZ"<<endl;
-                break;
-            case 4:
-                metaFile<<"accelerometer.Direction,NX"<<endl;
-                break;
-            case 5:
-                metaFile<<"accelerometer.Direction,NY"<<endl;
-                break;
-            case 6:
-                metaFile<<"accelerometer.Direction,NZ"<<endl;
-                break;
-            default:
-                metaFile<<"accelerometer.Direction,unspecified"<<endl;
-                break;
-            case 0:
-                metaFile<<"accelerometer.Direction,unspecified"<<endl;
-                break;
-        }
-
-        metaFile.close();
-
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -570,10 +624,6 @@ int main(int argc, char* argv[])
 
         free(rgbaFrame);
 
-        cout << endl;
-        cout << "Final stats:" << endl;
-        cout << "Line count: " << lineCount << endl;
-        cout << "Capture duration: " << duration / 1000000 << " seconds (" << duration << " µs)" << endl;
     }
     catch (const GenericException &e)
     {
