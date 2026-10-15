@@ -365,8 +365,14 @@ int main(int argc, char* argv[])
         metaFile << "serial.FloatSize,32"<<endl; // it's 8 if not specified
         metaFile << "serial.TimeUnit,microsecond"<<endl;
 
-        fstream camFile;
-        camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
+//        fstream camFile;
+//        camFile.open(outDir+"/cam.data", ios::app | ios::binary); // GNU IMP will import raw images from .data files
+        //TODO: check if fstream can do O_DIRECT
+        string camFileName = outDir+"/cam.data";
+        // we use O_DIRECT | O_SYNC here to ensure that our data is cached minimally by the kernel
+        // since we're not going to read it back particularly soon, there's not much reason for it to sit around in RAM,
+        // unless we're producing faster than the drive can write, which hopefully isn't the case
+        int camFile = open(camFileName.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_DIRECT | O_SYNC, S_IRUSR | S_IWUSR);
 
         auto startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
         thread accelThread(handleI2CAccel, i2cFd, outDir+"/serial.txt"); // to make the changes less breaking, keep the serial.txt name
@@ -399,8 +405,9 @@ int main(int argc, char* argv[])
             {
                 lineCount += ptrGrabResult->GetHeight();
                 char *buf = (char*) ptrGrabResult->GetBuffer();
-                camFile.write(buf, ptrGrabResult->GetBufferSize());
-                cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes" << endl;
+//                camFile.write(buf, ptrGrabResult->GetBufferSize());
+                int wRet = write(camFile, buf, ptrGrabResult->GetBufferSize());
+                cout << "Captured and wrote " << ptrGrabResult->GetBufferSize() << " bytes, write() returned "<<wRet<< endl;
                 zeroHistogram(histogram);
 
                 if(color) {
@@ -444,7 +451,7 @@ int main(int argc, char* argv[])
                     }
                 }
 
-                LoadTextureFromMemory(rgbaFrame, &my_image_texture, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth());
+//                LoadTextureFromMemory(rgbaFrame, &my_image_texture, ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth());
             }
             else
             {
@@ -464,7 +471,7 @@ int main(int argc, char* argv[])
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
                 ImGui::SliderInt("Gain", &gain, 0, maxGain);
                 // size provided here is the display size that the texture will be scaled to as needed
-                ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
+//                ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
             }
 
@@ -536,7 +543,8 @@ int main(int argc, char* argv[])
         
         // Close the camera.
         camera.Close();
-        camFile.close();
+//        camFile.close();
+        close(camFile);
         accelThread.join();
 
         metaFile << "capture.LineCount," << lineCount << endl;
