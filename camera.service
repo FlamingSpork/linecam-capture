@@ -1,0 +1,18 @@
+[Unit]
+Description=Linecam Capture
+
+[Service]
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+WorkingDirectory=/home/pi/basler
+User=pi
+Group=pi
+ExecStart=/home/pi/basler/LinecamCapture -e 250
+Restart=on-failure
+RestartSec=10s
+KillMode=process
+TimeoutSec=infinity
+
+[Install]
+WantedBy=graphical.target

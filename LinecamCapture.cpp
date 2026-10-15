@@ -251,6 +251,8 @@ int main(int argc, char* argv[])
     int i2cFd = beginI2CAccel();
     int serialGPSfd = beginSerialGPS("/dev/ttyAMA0"); // UART0; board pins 8 (RXD), 10 (TXD)
 
+    bool shutdownFlag = false;
+
     // we don't want to start the window until the serial port is ready so that it isn't sitting around blank
 
     glfwSetErrorCallback(glfw_error_callback);
@@ -266,6 +268,7 @@ int main(int argc, char* argv[])
 
     // Create window with graphics context
     float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
     GLFWwindow* window = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "Line Camera Capture", nullptr, nullptr);
     if (window == nullptr) {
         cerr<<"glfwCreateWindow() returned null!" << endl;
@@ -365,6 +368,8 @@ int main(int argc, char* argv[])
                 mkdir(outDir.c_str(), 0770);
                 cout << "Created output dir " << outDir << endl;
 
+                directionSelection = 0; // avoid persisting between runs
+
                 metaFile = ofstream(outDir + "/meta.csv");
                 metaFile << "key,value" << endl;
                 metaFile << "camera.ModelName," << camera.GetDeviceInfo().GetModelName() << endl;
@@ -386,6 +391,7 @@ int main(int argc, char* argv[])
                 camFile = open(camFileName.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_DIRECT | O_SYNC, S_IRUSR | S_IWUSR);
 
                 startTime = chrono::high_resolution_clock::now(); // microseconds counter; perhaps overkill
+                lineCount = 0;
                 accelThread = thread(handleI2CAccel, i2cFd, outDir+"/serial.txt"); // to make the changes less breaking, keep the serial.txt name
                 gpsThread = thread(handleSerialGPS, serialGPSfd, outDir+"/gps.txt");
                 captureStart = false;
@@ -465,14 +471,12 @@ int main(int argc, char* argv[])
             ImGui::NewFrame();
 
             {
-                ImGui::Begin("Preview");
-                ImGui::Text("size = %d x %d", rows, cols);
-                ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+                ImGui::Begin("Preview (Full Size)");
                 // size provided here is the display size that the texture will be scaled to as needed
                 ImGui::Image((ImTextureID)(intptr_t)my_image_texture, ImVec2(rows, cols));
                 ImGui::End();
             }
-
+            // TODO: maybe add a second preview scaled to fit the window? should be able to use the same texture
             {
                 ImGui::Begin("Exposure");
                 // https://github.com/ocornut/imgui/issues/4866 this implies that \u is correct
@@ -481,9 +485,12 @@ int main(int argc, char* argv[])
                 // TODO: measure ISO equivalent for gain and put that here
                 // TODO: can I calculate an "EV" value here? maybe an average pixel value?
                 ImGui::SliderInt("Gain", &gain, 0, maxGain);
+                ImGui::Separator();
                 if(!capFlag) {
                     // pylon gets upset if it's below 3 and the visible frame rate gets unusable above ~500
+                    // TODO: replace with demo::Widgets/Basic/Buttons (Repeating) for better touchscreen usage?
                     ImGui::SliderInt("Exposure Time", &expTime, 3, 500);
+                    ImGui::Separator();
                 }
                 ImGui::PlotHistogram("Histogram", histogram, 256);
                 ImGui::End();
@@ -515,7 +522,11 @@ int main(int argc, char* argv[])
 
             {
                 ImGui::Begin("Accelerometer");
-                ImGui::Text("x: %.2f, y: %.2f, z: %.2f", latestAccel.x, latestAccel.y, latestAccel.z);
+                if(capFlag) {
+                    ImGui::Text("x: %.2f, y: %.2f, z: %.2f", latestAccel.x, latestAccel.y, latestAccel.z);
+                }else {
+                    ImGui::Text("x: --, y: --, z: --");
+                }
                 ImGui::Text("Motion direction:");
                 ImGui::RadioButton("Unspecified", &directionSelection, 0);
                 ImGui::RadioButton("+X", &directionSelection, 1);
@@ -536,12 +547,24 @@ int main(int argc, char* argv[])
 
             {
                 ImGui::Begin("Program");
+                ImGui::Text("size = %d x %d", rows, cols);
+                ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
                 if(ImGui::Button("Exit LinecamCapture")) {
                     runFlag = false;
                     if(capFlag) {
                         capFlag = false;
                         captureCleanup = true;
                     }
+                    exitCode = 0;
+                }
+                ImGui::Separator();
+                if(ImGui::Button("Shut down camera")) {
+                    runFlag = false;
+                    if(capFlag) {
+                        capFlag = false;
+                        captureCleanup = true;
+                    }
+                    shutdownFlag = true;
                 }
                 ImGui::End();
             }
@@ -604,6 +627,7 @@ int main(int argc, char* argv[])
                 }
 
                 metaFile.close();
+                directionSelection = 0;
 
                 cout << endl;
                 cout << "Final stats:" << endl;
@@ -634,7 +658,14 @@ int main(int argc, char* argv[])
     }
 
     // Releases all pylon resources. 
-    PylonTerminate(); 
+    PylonTerminate();
+
+    if(shutdownFlag) {
+        // starting it through systemd doesn't count as an interactive session for purposes of shutting down
+        // so instead we ask dbus to do it and explicitly allow pi permission to do org.freedesktop.login1.power-off-multiple-sessions
+        // https://fhackts.wordpress.com/2019/08/08/shutting-down-or-rebooting-over-dbus-programmatically-from-a-non-root-user/
+        system("dbus-send --system --print-reply --dest=org.freedesktop.login1 /org/freedesktop/login1 \"org.freedesktop.login1.Manager.PowerOff\" boolean:true");
+    }
 
     return exitCode;
 }
